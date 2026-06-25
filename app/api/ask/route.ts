@@ -34,6 +34,7 @@ export async function POST(req: Request) {
       // GOTCHA: streamText does NOT throw on model errors — it puts them INTO the
       // stream so the server can't crash mid-response. So your try/catch below won't
       // catch generation errors. This callback is how you log them server-side.
+      abortSignal: req.signal, // client aborts → connection closes → req.signal fires → generation stops
       onError: ({ error }) => console.error("Stream error in /api/ask:", error),
     });
 
