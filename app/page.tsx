@@ -27,14 +27,39 @@ export default function Home() {
         body: JSON.stringify({ document, question }),
       });
 
+      // Error responses are still JSON (the route returns Response.json on failure).
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error ?? "Request failed.");
       }
 
-      const data = await res.json();
-      setAnswer(data.answer);
-      setSources(data.sources ?? []);
+      // Sources came in the header, before any tokens — read them first.
+      const sourcesHeader = res.headers.get("x-sources");
+      if (sourcesHeader) {
+        setSources(JSON.parse(decodeURIComponent(sourcesHeader)));
+      }
+
+      if (!res.body) throw new Error("No response body to stream.");
+
+      // THE STREAMING CORE — this is the part to actually understand.
+      // res.body is a ReadableStream of raw BYTES. We pull from it piece by piece.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder(); // turns bytes → text
+
+      while (true) {
+        const { done, value } = await reader.read(); // wait for the next chunk
+        if (done) break; // stream closed → finished
+
+        // value is a Uint8Array (bytes). { stream: true } correctly handles a
+        // multi-byte character that got split across two network chunks.
+        const chunk = decoder.decode(value, { stream: true });
+
+        // Append to state. The FUNCTIONAL updater (prev => prev + chunk) is essential:
+        // it builds on the latest value instead of a stale closure, so tokens
+        // accumulate correctly across many rapid re-renders. This is the async-state
+        // lesson in one line.
+        setAnswer((prev) => prev + chunk);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
