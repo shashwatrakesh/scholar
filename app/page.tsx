@@ -1,18 +1,24 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  Children,
+  isValidElement,
+  cloneElement,
+  type ReactNode,
+} from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 type ScoredChunk = { text: string; index: number; score: number };
 
-// One clickable citation badge with an inline popover showing its chunk.
+// UNCHANGED from the citations step — one clickable badge with an inline popover.
 function Citation({ n, chunk }: { n: number; chunk: ScoredChunk }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
-  // Close the popover when you click anywhere outside it. Classic useEffect
-  // pattern: subscribe to a document event while open, and CLEAN UP the listener
-  // when it closes or unmounts (the returned function). Forgetting that cleanup
-  // is the #1 useEffect bug — listeners pile up and fire multiple times.
   useEffect(() => {
     if (!open) return;
     function onClickOutside(e: MouseEvent) {
@@ -44,25 +50,45 @@ function Citation({ n, chunk }: { n: number; chunk: ScoredChunk }) {
   );
 }
 
-// Turn the answer string into an array of text + <Citation> nodes.
-function renderAnswerWithCitations(answer: string, sources: ScoredChunk[]) {
-  // The capturing group ( ) makes split KEEP the markers in the output array,
-  // so we get: ["text before ", "[Source 1]", " text after", ...].
-  const parts = answer.split(/(\[Source \d+\])/g);
-
-  return parts.map((part, i) => {
+// Split ONE plain string on [Source N] and swap complete markers for <Citation>.
+// (Same logic as before — half-streamed "[Sou" simply won't match and stays text.)
+function injectCitations(
+  text: string,
+  sources: ScoredChunk[],
+  keyPrefix: string,
+): ReactNode[] {
+  return text.split(/(\[Source \d+\])/g).map((part, i) => {
     const match = part.match(/^\[Source (\d+)\]$/);
-    // Not a complete marker (plain text, OR a half-streamed "[Sou") → render as-is.
     if (!match) return part;
-
     const n = Number(match[1]);
-    const chunk = sources[n - 1]; // [Source 1] → sources[0]
+    const chunk = sources[n - 1];
+    if (!chunk) return part; // out-of-range / not loaded yet → literal text
+    return <Citation key={`${keyPrefix}-${i}`} n={n} chunk={chunk} />;
+  });
+}
 
-    // Bad/out-of-range reference, or sources not loaded yet → show the literal
-    // text instead of crashing. Never trust the model to cite a real source.
-    if (!chunk) return part;
-
-    return <Citation key={i} n={n} chunk={chunk} />;
+// THE NEW PIECE: walk a rendered element's children. Strings get marker-replaced;
+// nested elements (a citation inside **bold**, say) get recursed into and cloned
+// with their processed children. This is what handles the Markdown TREE instead
+// of a flat string.
+function processChildren(
+  children: ReactNode,
+  sources: ScoredChunk[],
+): ReactNode {
+  return Children.map(children, (child, i) => {
+    if (typeof child === "string")
+      return injectCitations(child, sources, `s${i}`);
+    if (isValidElement(child)) {
+      const props = child.props as { children?: ReactNode };
+      if (props.children) {
+        return cloneElement(
+          child,
+          {},
+          processChildren(props.children, sources),
+        );
+      }
+    }
+    return child; // already an element with no children, or non-string leaf
   });
 }
 
@@ -75,6 +101,33 @@ export default function Home() {
   const [error, setError] = useState("");
 
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Override how react-markdown renders each element: add light styling, and run
+  // text-bearing nodes (p, li) through processChildren so citations appear inside
+  // properly-rendered Markdown. Defined here so it closes over the latest `sources`.
+  const markdownComponents: Components = {
+    p(props) {
+      return (
+        <p className="mb-3 last:mb-0">
+          {processChildren(props.children, sources)}
+        </p>
+      );
+    },
+    li(props) {
+      return (
+        <li className="mb-1">{processChildren(props.children, sources)}</li>
+      );
+    },
+    ul(props) {
+      return <ul className="mb-3 list-disc pl-5">{props.children}</ul>;
+    },
+    ol(props) {
+      return <ol className="mb-3 list-decimal pl-5">{props.children}</ol>;
+    },
+    strong(props) {
+      return <strong className="font-semibold">{props.children}</strong>;
+    },
+  };
 
   async function handleSubmit() {
     if (!document.trim() || !question.trim()) return;
@@ -173,8 +226,13 @@ export default function Home() {
       {error && <p className="mt-4 text-red-600">{error}</p>}
 
       {answer && (
-        <div className="mt-6 whitespace-pre-wrap rounded  p-4 leading-relaxed">
-          {renderAnswerWithCitations(answer, sources)}
+        <div className="mt-6 rounded bg-gray-50 p-4 leading-relaxed">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={markdownComponents}
+          >
+            {answer}
+          </ReactMarkdown>
         </div>
       )}
 
