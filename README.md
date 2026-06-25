@@ -4,8 +4,7 @@ A RAG-powered research assistant. Paste or upload a document, ask a question, an
 
 > Built to explore the full stack of a modern AI frontend: retrieval-augmented generation, streaming LLM UIs, async state management, and defensive handling of non-deterministic model output — entirely in TypeScript.
 
-<!-- TODO: add a screenshot or short GIF of the app answering a question with citations -->
-<!-- TODO: add your live demo link here if deployed, e.g. **[Live demo](https://your-app.vercel.app)** -->
+**[🔗 Live demo](https://scholar-vert.vercel.app/)** · built with Next.js, TypeScript & the Vercel AI SDK
 
 ---
 
